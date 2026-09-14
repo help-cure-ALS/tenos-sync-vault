@@ -10,7 +10,10 @@ const MAX_BATCH = Number(process.env.MAX_BATCH_EVENTS ?? "500");
 const MAX_PULL = Number(process.env.MAX_PULL_LIMIT ?? "2000");
 
 // Hard limit for device count (audit-friendly)
-const MAX_DEVICES_PER_SUBJECT = Number(process.env.MAX_DEVICES_PER_SUBJECT ?? "10");
+// Devices per subject. Counts only ACTIVE devices (revoked ones free
+// their slot). Generous by default — the limit exists to cap abuse,
+// not to constrain households with many devices. Override via env.
+const MAX_DEVICES_PER_SUBJECT = Number(process.env.MAX_DEVICES_PER_SUBJECT ?? "50");
 
 // Challenge TTL in seconds
 const CHALLENGE_TTL_SECONDS = Number(process.env.AUTH_CHALLENGE_TTL_SECONDS ?? "60");
@@ -944,10 +947,12 @@ export async function routes(app: FastifyInstance) {
                 } else {
                     // New device with no row = OWNER first-auth (recipients are pre-created via
                     // /devices/authorize). Verified against the subject root key above.
+                    // Only ACTIVE devices count against the limit — a
+                    // revoked/disabled device frees its slot.
                     const devCount = await client.query(
                         `select count(*) ::int as n
                          from devices
-                         where subject_id = $1`,
+                         where subject_id = $1 and status = 'active'`,
                         [subject_id]
                     );
                     if ((devCount.rows[0]?.n ?? 0) >= MAX_DEVICES_PER_SUBJECT) {
@@ -1077,8 +1082,11 @@ export async function routes(app: FastifyInstance) {
                 );
 
                 if ((existing.rowCount ?? 0) === 0) {
+                    // Only ACTIVE devices count against the limit — a
+                    // revoked/disabled device frees its slot.
                     const devCount = await client.query(
-                        `select count(*) ::int as n from devices where subject_id = $1`,
+                        `select count(*) ::int as n from devices
+                         where subject_id = $1 and status = 'active'`,
                         [subject_id]
                     );
                     if ((devCount.rows[0]?.n ?? 0) >= MAX_DEVICES_PER_SUBJECT) {
